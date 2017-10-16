@@ -30,11 +30,14 @@ resetDebugLevel()
 
 local bmw_proto = Proto("bmw", "BMW BCL")
 
+local TYPE_NAMES = {}
+TYPE_NAMES[0x0FA4] = "Etch"
+
 local hdr_fields =
 {
 	val1 = ProtoField.uint16 ("bmw.val1", "Val1", base.HEX),
-	val2 = ProtoField.uint16 ("bmw.val2", "Val2", base.HEX),
-	val3 = ProtoField.uint16 ("bmw.val3", "Val3", base.HEX),
+	channel = ProtoField.uint16 ("bmw.channel", "Channel", base.DEC),
+	type = ProtoField.uint16 ("bmw.type", "Type", base.HEX, TYPE_NAMES),
 	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC)
 }
 bmw_proto.fields = hdr_fields
@@ -292,8 +295,8 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	
 	-- get the vals
 	tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
-	tree:add(hdr_fields.val2, tvbuf:range(offset+2, 2))
-	tree:add(hdr_fields.val3, tvbuf:range(offset+4, 2))
+	tree:add(hdr_fields.channel, tvbuf:range(offset+2, 2))
+	tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
 	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
 	
 	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
@@ -323,8 +326,8 @@ function dissect_start_fragment_packet(tvbuf, pktinfo, root, offset)
 	
 	-- get the vals
 	tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
-	tree:add(hdr_fields.val2, tvbuf:range(offset+2, 2))
-	tree:add(hdr_fields.val3, tvbuf:range(offset+4, 2))
+	tree:add(hdr_fields.channel, tvbuf:range(offset+2, 2))
+	tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
 	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
 	
 	tree:add(tvbuf:range(offset + BMW_MSG_HDR_LEN), "[Fragment of Data 0-" .. tostring(tvbuf:len() - offset) .. "/" .. tostring(BMW_MSG_HDR_LEN + data_len) .. "]")
