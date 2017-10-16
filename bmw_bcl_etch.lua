@@ -28,6 +28,7 @@ end
 -- call it now
 resetDebugLevel()
 
+bcl_channel = Field.new("bmw.channel")	-- get the BCL channel that the Etch stream is wrapped in, to combine the appropriate streams
 
 local bcl_proto = Proto("bmw_bcl_etch", "BMW BCL-wrapped Etch")
 
@@ -57,7 +58,7 @@ end
 function bcl_proto.dissector(tvbuf, pktinfo, root)
 	local dissect_etch = Dissector.get("etch")	-- the real Etch dissector
 	-- load up previous assembly state
-	local partial_packet = partial_packets[0]
+	local partial_packet = partial_packets[bcl_channel()()]
 	local assembly_state = assembly_states[pktinfo.number]	-- is this a split packet?
 	local partial_type = 0
 	if assembly_state ~= nil then
@@ -84,7 +85,7 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 			partial_packet = {}
 			partial_packet.bytes = tvbuf:bytes()
 			partial_packet.total_size = ETCH_MSG_HDR_LEN + etch_message_len
-			partial_packets[0] = partial_packet
+			partial_packets[bcl_channel()()] = partial_packet
 			assembly_state = {}
 			assembly_state.partial_type = 1
 			assembly_state.start_size = 0
@@ -112,7 +113,7 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 			-- finished collecting bytes
 			assembly_state.partial_type = 3
 			assembly_state.bytes = partial_packet.bytes
-			partial_packets[0] = nil
+			partial_packets[bcl_channel()()] = nil
 		end
 		assembly_states[pktinfo.number] = assembly_state
 	end
