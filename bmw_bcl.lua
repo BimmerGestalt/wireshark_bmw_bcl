@@ -38,11 +38,17 @@ local hdr_fields =
 	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC)
 }
 bmw_proto.fields = hdr_fields
+
 dprint2("bmw_proto ProtoFields registered")
 
 local dissect_data = Dissector.get("data")
 
+local partial_packets = {}		-- currently assembling this packet, during the first pass, keyed by bluetooth direction+channel
+local assembled_packets = {}	-- assembly state for each packet (and subpacket), keyed by pktinfo.number and packet offset
+
 function bmw_proto.init()
+	partial_packets = {}
+	assembled_packets = {}
 end
 
 local BMW_MSG_HDR_LEN = 8
@@ -50,55 +56,228 @@ local BMW_MSG_HDR_LEN = 8
 -- mention future helper methods
 local check_bmw_length
 
-function bmw_proto.dissector(tvbuf, pktinfo, root)
-	dprint2("bmw_proto.dissector called")
+local rfcomm_fields = {
+	direction = Field.new("btrfcomm.direction"),
+	command = Field.new("btrfcomm.cr"),
+	channel = Field.new("btrfcomm.channel")
+}
+function btrfcomm_directed_channel(pktinfo)
+	local direction = rfcomm_fields.direction()()
+	local command = rfcomm_fields.command()()
+	local channel = rfcomm_fields.channel()()
 	
-	-- check packet length
-	local pktlen = tvbuf:len()
-	local bytes_consumed = 0
-	
-	while bytes_consumed < pktlen do
-		-- call dissect_packet for this single packet
-		-- it will return a positive number for the amount of bytes consumed
-		-- or a negative number for a request for more bytes
-		-- or 0 for an error
-		local result = dissect_packet(tvbuf, pktinfo, root, bytes_consumed)
-		
-		if result > 0 then
-			-- successfully parsed packet
-			bytes_consumed = bytes_consumed + result
-		elseif result == 0 then
-			-- not a valid packet
-			return 0
-		else
-			-- need more data to finish parsing
-			pktinfo.desegment_offset = bytes_consumed
-			pktinfo.desegment_len = 0 - result
-			return pktlen
-		end
+	dprint2("btrfcomm_directed_channel decided " .. tostring(direction) .. ":" .. tostring(command) .. ":" .. tostring(channel))
+	if direction == 0 then
+		direction = ">"
 	end
-	return bytes_consumed
+	if command == 1 then
+		command = ">"
+	end
+	return direction .. command .. tostring(channel)
 end
 
 local function heuristic(tvbuf, pktinfo, root)
-	ETCH_MAGIC = ByteArray.new("de ad be ef")
+	local pktlen = tvbuf:len()
+	if pktlen == 4 and tvbuf:bytes():tohex() == "12345678" then
+		return true
+	end
 	
-	if tvbuf:len() < BMW_MSG_HDR_LEN + 4 then
+	if pktlen < 8 then
 		return false
 	end
 	
-	local etch_magic = tvbuf:range(BMW_MSG_HDR_LEN, 4):bytes()
-	return etch_magic == ETCH_MAGIC
+	-- check if this packet is parseable
+	local magic = tvbuf:bytes(5,1):tohex()
+	if magic == "89" or magic == "A4" then
+		-- found a packet we know how to handle
+		return true
+	end
+	
+	-- next check if the length is right
+	local offset = 0
+	local valid_size = true
+	while offset < tvbuf:len() do
+		local parsed_length = tvbuf:range(offset + 6,2):uint()
+		if pktlen < offset + BMW_MSG_HDR_LEN + parsed_length then
+			valid_size = false
+		end
+		offset = offset + BMW_MSG_HDR_LEN + parsed_length
+	end
+	if offset == tvbuf:len() then
+		-- multiple sub packets, all with the correct size
+		return true
+	end
+	
+	-- check if we have an etch packet
+	ETCH_MAGIC = ByteArray.new("de ad be ef")
+	
+	if tvbuf:len() >= BMW_MSG_HDR_LEN + 4 then
+		local etch_magic = tvbuf:bytes(BMW_MSG_HDR_LEN, 4)
+		return etch_magic == ETCH_MAGIC
+	end
+	
+	return false
 end
 
-function dissect_packet(tvbuf, pktinfo, root, offset)
-	dprint2("dissect_packet function called")
-	local length_val, length_tvbf = check_bmw_length(tvbuf, offset)
+-- so sometimes a single SPP packet contains multiple BCL packets
+-- the main dissector function goes through the SPP and identifies subpackets
+-- and calls a function to dissect a single subpacket at a time
+function bmw_proto.dissector(tvbuf, pktinfo, root)
+	--dprint2("bmw_proto.dissector called")
 	
-	if length_val <= 0 then
-		-- not enough data to get the header
-		return length_val
+	-- load up packet address
+	local address = btrfcomm_directed_channel(pktinfo)
+	
+	-- check packet length
+	local pktlen = tvbuf:len()
+	
+	if pktlen == 4 and tvbuf:bytes():tohex() == "12345678" then
+		pktinfo.cols.protocol:set("BMW BCL")
+		pktinfo.cols.info:set("BMW BCL Startup")
+		return 4
 	end
+	
+	-- if we have the start of a new packet, not part of ongoing assembly, check if we can handle it
+	local packet_number = tostring(pktinfo.number) .. ":" .. tostring(0)
+	if partial_packets[address] == nil and assembled_packets[packet_number] == nil then
+		-- check if we know how to handle this packet
+		local understandable = heuristic(tvbuf, pktinfo, root)
+		if understandable == false then
+			dprint2("Don't know how to handle this packet: " .. tvbuf:bytes(0,8):tohex())
+			return 0
+		end
+	end
+	
+	-- begin processing the packet(s)
+	local consumed = 0
+	
+	while consumed < pktlen do
+		consumed = consumed + dissect_subpackets(tvbuf, pktinfo, root, consumed)
+	end
+	
+	return consumed
+end
+
+function dissect_subpackets(tvbuf, pktinfo, root, offset)
+	local address = btrfcomm_directed_channel(pktinfo)
+	local pktlen = tvbuf:len()
+	
+	-- load up any reassembly state for this packet
+	local packet_number = tostring(pktinfo.number) .. ":" .. tostring(offset)
+	local state = assembled_packets[packet_number]
+	local packet_fragment_type = 0
+	if state ~= nil then
+		packet_fragment_type = state.partial_type
+		dprint2("Already know that this packet is fragment type " .. tostring(packet_fragment_type))
+	end
+	
+	-- handle a new packet
+	if packet_fragment_type < 2 and partial_packets[address] == nil then
+		local data_length = tvbuf:range(offset+6,2):uint()
+		if pktlen >= offset + BMW_MSG_HDR_LEN + data_length then
+			dprint2("Parsing complete packet on channel " .. tostring(address))
+			local result = dissect_full_packet(tvbuf, pktinfo, root, offset)
+			if offset > 0 or pktlen > offset + BMW_MSG_HDR_LEN + data_length then
+				if string.find(tostring(pktinfo.cols.info), "multiple packets") == nil then
+					pktinfo.cols.info:set(tostring(pktinfo.cols.info) .. ", multiple packets")
+				end
+			end
+			return result
+		else
+			-- save the packet for reassembly
+			dprint2("Saving packet for future assembly on channel " .. tostring(address))
+			
+			if state == nil then
+				partial_packets[address] = {}
+				partial_packets[address].number = pktinfo.number
+				partial_packets[address].bytes = tvbuf:bytes(offset)
+				partial_packets[address].total_size = BMW_MSG_HDR_LEN + data_length
+				
+				state = {
+					partial_type = 1,
+					start_size = 0,
+					total_size = partial_packets[address].total_size
+				}
+				assembled_packets[packet_number] = state
+			end
+			
+			local result = dissect_start_fragment_packet(tvbuf, pktinfo, root, offset)
+			return result
+		end
+	end
+	
+	-- parsing a partial packet
+	local reassembly = partial_packets[address]	-- first pass assembly state
+	local total_size
+	local current_size
+	if state == nil then	-- first time seeing the packet, use the assembly state
+		total_size = reassembly.total_size
+		current_size = reassembly.bytes:len()
+	else	-- already parsed the packet, use what was remembered before
+		total_size = state.total_size
+		current_size = state.start_size
+	end
+	local needed_size = total_size - current_size
+	local this_packet_size = math.min(pktlen-offset, needed_size)
+	local received_size = current_size + this_packet_size
+	
+	if received_size < total_size then
+		-- accrue more data
+		if state == nil then
+			state = {
+				partial_type = 2,
+				start_size = reassembly.bytes:len(),
+				total_size = reassembly.total_size
+			}
+			assembled_packets[packet_number] = state
+			
+			-- assemble the packet
+			reassembly.bytes:append(tvbuf:bytes(offset, this_packet_size))
+		end
+		
+		dprint2("Collecting more data on channel " .. tostring(address) .. " - " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size))
+		pktinfo.cols.protocol:set("BMW BCL")
+		if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
+			local info = "BMW BCL (continuing fragment " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. ")"
+			pktinfo.cols.info:set(info)
+		end
+		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
+		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
+		
+		return this_packet_size
+	elseif received_size >= total_size then
+		-- make an assembled packet and analyze it
+		if state == nil then
+			state = {
+				partial_type = 3,
+				start_size = reassembly.bytes:len(),
+				total_size = reassembly.total_size
+			}
+			assembled_packets[packet_number] = state
+			
+			-- assemble the packet
+			reassembly.bytes:append(tvbuf:bytes(offset, this_packet_size))
+			state.assembled_bytes = reassembly.bytes
+			partial_packets[address] = nil
+		end
+		
+		dprint2("Found a complete packet on channel " .. tostring(address) .. " - " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size))
+		if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
+			local info = "BMW BCL (final fragment " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. ")"
+			pktinfo.cols.info:set(info)
+		end
+		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
+		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
+		
+		local assembled_tvbuf = state.assembled_bytes:tvb("Assembled")
+		local result = dissect_full_packet(assembled_tvbuf, pktinfo, root, 0)
+		return needed_size
+	end
+end
+
+function dissect_full_packet(tvbuf, pktinfo, root, offset)
+	dprint2("dissect_full_packet function called at offset " .. tostring(offset))
+	dprint2(tvbuf:bytes(offset):tohex())
 	
 	-- update the packet list info
 	pktinfo.cols.protocol:set("BMW BCL")
@@ -106,48 +285,51 @@ function dissect_packet(tvbuf, pktinfo, root, offset)
 		pktinfo.cols.info:set("BMW BCL")
 	end
 	
+	data_len = tvbuf:range(offset+6, 2):uint()
+	
 	-- create the protocol tree field
-	local tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + length_val))
+	local tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + data_len))
 	
 	-- get the vals
-	tree:add(hdr_fields.val1, tvbuf:range(offset, 2))
+	tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
 	tree:add(hdr_fields.val2, tvbuf:range(offset+2, 2))
 	tree:add(hdr_fields.val3, tvbuf:range(offset+4, 2))
-	tree:add(hdr_fields.len, length_tvbf)
+	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
 	
-	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, length_val):tvb()
-	dissect_data:call(remaining_tvb, pktinfo, root)
+	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
+	dissect_data:call(remaining_tvb, pktinfo, root)	-- might be highlevel eventually
 	
-	return BMW_MSG_HDR_LEN + length_val
+	return BMW_MSG_HDR_LEN + data_len
 end
 
-function check_bmw_length(tvbuf, offset)
-	-- remaining bytes in the packet to look through
-	local msglen = tvbuf:len() - offset
+function dissect_start_fragment_packet(tvbuf, pktinfo, root, offset)
+	dprint2("dissect_start_fragment_packet function called at offset " .. tostring(offset))
+	dprint2(tvbuf:bytes(offset):tohex())
+	data_len = tvbuf:range(offset+6, 2):uint()
 	
-	-- check if capture was only capturing partial packet size
-	if msglen ~= tvbuf:reported_length_remaining(offset) then
-		-- captured packets are being sliced/cut-off, so don't try to desegment/reassemble
-		dprint2("Captured packet was shorter than original, can't reassemble")
-		return 0
+	-- update the packet list info
+	pktinfo.cols.protocol:set("BMW BCL")
+	local info = "(initial fragment 0-" .. tostring(tvbuf:len() - offset) .. "/" .. tostring(BMW_MSG_HDR_LEN + data_len) .. ")"
+	if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
+		pktinfo.cols.info:set("BMW BCL " .. info)
+	else
+		-- found a partial packet at the end of a combined packet
+		pktinfo.cols.info:set(tostring(pktinfo.cols.info) .. ", " .. info)
 	end
 	
-	if msglen < BMW_MSG_HDR_LEN then
-		-- we need more bytes to parse the header
-		dprint2("Need more bytes to look at the header")
-		return -DESEGMENT_ONE_MORE_SEGMENT
-	end
 	
-	-- we have enough to parse the length from the header
-	local length_tvbr = tvbuf:range(offset+6, 2)
-	local length_val = length_tvbr:uint()
+	-- create the protocol tree field
+	local tree = root:add(bmw_proto, tvbuf:range(offset))
 	
-	-- check if we have the whole packet somewhere
-	if msglen < BMW_MSG_HDR_LEN + length_val then
-		dprint2("Need more bytes to desegment full packet")
-		return -(BMW_MSG_HDR_LEN + length_val - msglen)
-	end
-	return length_val, length_tvbr
+	-- get the vals
+	tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
+	tree:add(hdr_fields.val2, tvbuf:range(offset+2, 2))
+	tree:add(hdr_fields.val3, tvbuf:range(offset+4, 2))
+	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
+	
+	tree:add(tvbuf:range(offset + BMW_MSG_HDR_LEN), "[Fragment of Data 0-" .. tostring(tvbuf:len() - offset) .. "/" .. tostring(BMW_MSG_HDR_LEN + data_len) .. "]")
+	
+	return tvbuf:len() - offset
 end
 
 function enable_dissector()
