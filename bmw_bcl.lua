@@ -44,10 +44,9 @@ bmw_proto.fields = hdr_fields
 
 dprint2("bmw_proto ProtoFields registered")
 
-local dissect_data = Dissector.get("data")
-
 local partial_packets = {}		-- currently assembling this packet, during the first pass, keyed by bluetooth direction+channel
 local assembled_packets = {}	-- assembly state for each packet (and subpacket), keyed by pktinfo.number and packet offset
+local etch_channels = {}	-- once etch traffic is seen on a channel, keep parsing that channel as etch
 
 function bmw_proto.init()
 	partial_packets = {}
@@ -181,7 +180,7 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			dprint2("Parsing complete packet on channel " .. tostring(address))
 			local result = dissect_full_packet(tvbuf, pktinfo, root, offset)
 			if offset > 0 or pktlen > offset + BMW_MSG_HDR_LEN + data_length then
-				if string.find(tostring(pktinfo.cols.info), "multiple packets") == nil then
+				if tostring(pktinfo.cols.protocol) == "BMW BCL" and string.find(tostring(pktinfo.cols.info), "multiple packets") == nil then
 					pktinfo.cols.info:set(tostring(pktinfo.cols.info) .. ", multiple packets")
 				end
 			end
@@ -272,7 +271,7 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
 		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
 		
-		local assembled_tvbuf = state.assembled_bytes:tvb("Assembled")
+		local assembled_tvbuf = state.assembled_bytes:tvb("SPP Assembled")
 		local result = dissect_full_packet(assembled_tvbuf, pktinfo, root, 0)
 		return needed_size
 	end
@@ -283,8 +282,10 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	dprint2(tvbuf:bytes(offset):tohex())
 	
 	-- update the packet list info
-	pktinfo.cols.protocol:set("BMW BCL")
-	if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
+	if tostring(pktinfo.cols.protocol) ~= "ETCH" then
+		pktinfo.cols.protocol:set("BMW BCL")
+	end
+	if tostring(pktinfo.cols.protocol) == "BMW BCL" and string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
 		pktinfo.cols.info:set("BMW BCL")
 	end
 	
@@ -299,8 +300,19 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
 	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
 	
+	-- try to parse the inner data
+	local channel = tvbuf:range(offset, 4):uint()
+	ETCH_MAGIC = ByteArray.new("de ad be ef")
 	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
-	dissect_data:call(remaining_tvb, pktinfo, root)	-- might be highlevel eventually
+	local is_etch = data_len > 4 and remaining_tvb:bytes(0,4) == ETCH_MAGIC
+	if etch_channels[channel] or is_etch then
+		etch_channels[channel] = true
+		local dissect_etch = Dissector.get("bmw_bcl_etch")
+		dissect_etch:call(remaining_tvb, pktinfo, root)
+	else
+		local dissect_data = Dissector.get("data")
+		dissect_data:call(remaining_tvb, pktinfo, root)
+	end
 	
 	return BMW_MSG_HDR_LEN + data_len
 end
