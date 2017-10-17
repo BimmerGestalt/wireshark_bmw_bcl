@@ -1,3 +1,7 @@
+0x6306b468,_messageId
+0xeda8c9a6,_inReplyTo
+0x2de1755c,msg
+0x8104fdc2,result
 0xeb4b8944,de.bmw.idrive.BMWRemoting.VersionInfo
 0x4bbacb4d,de.bmw.idrive.BMWRemoting.SecurityException
 0x5a6f115c,de.bmw.idrive.BMWRemoting.ServiceException
