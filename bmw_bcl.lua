@@ -191,6 +191,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			
 			if state == nil then
 				partial_packets[address] = {}
+				partial_packets[address].val1 = tvbuf:range(offset+0, 2):uint()
+				partial_packets[address].channel = tvbuf:range(offset+2, 2):uint()
+				partial_packets[address].type = tvbuf:range(offset+4, 2):uint()
 				partial_packets[address].number = pktinfo.number
 				partial_packets[address].bytes = tvbuf:bytes(offset)
 				partial_packets[address].total_size = BMW_MSG_HDR_LEN + data_length
@@ -227,6 +230,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 		-- accrue more data
 		if state == nil then
 			state = {
+				val1 = reassembly.val1,
+				channel = reassembly.channel,
+				type = reassembly.type,
 				partial_type = 2,
 				start_size = reassembly.bytes:len(),
 				total_size = reassembly.total_size
@@ -244,6 +250,10 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			pktinfo.cols.info:set(info)
 		end
 		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
+		tree:add(hdr_fields.val1, state.val1)
+		tree:add(hdr_fields.channel, state.channel)
+		tree:add(hdr_fields.type, state.type)
+		tree:add(hdr_fields.len, state.total_size)
 		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
 		
 		return this_packet_size
@@ -251,6 +261,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 		-- make an assembled packet and analyze it
 		if state == nil then
 			state = {
+				val1 = reassembly.val1,
+				channel = reassembly.channel,
+				type = reassembly.type,
 				partial_type = 3,
 				start_size = reassembly.bytes:len(),
 				total_size = reassembly.total_size
@@ -269,6 +282,10 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			pktinfo.cols.info:set(info)
 		end
 		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
+		tree:add(hdr_fields.val1, state.val1)
+		tree:add(hdr_fields.channel, state.channel)
+		tree:add(hdr_fields.type, state.type)
+		tree:add(hdr_fields.len, state.total_size)
 		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
 		
 		local assembled_tvbuf = state.assembled_bytes:tvb("SPP Assembled")
