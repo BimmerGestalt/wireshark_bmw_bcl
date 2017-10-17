@@ -340,13 +340,17 @@ function dissect_start_fragment_packet(tvbuf, pktinfo, root, offset)
 	data_len = tvbuf:range(offset+6, 2):uint()
 	
 	-- update the packet list info
-	pktinfo.cols.protocol:set("BMW BCL")
-	local info = "(initial fragment 0-" .. tostring(tvbuf:len() - offset) .. "/" .. tostring(BMW_MSG_HDR_LEN + data_len) .. ")"
-	if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
-		pktinfo.cols.info:set("BMW BCL " .. info)
-	else
-		-- found a partial packet at the end of a combined packet
-		pktinfo.cols.info:set(tostring(pktinfo.cols.info) .. ", " .. info)
+	if tostring(pktinfo.cols.protocol) ~= "ETCH" then
+		pktinfo.cols.protocol:set("BMW BCL")
+	end
+	if tostring(pktinfo.cols.protocol) == "BMW BCL" then
+		local info = "(initial fragment 0-" .. tostring(tvbuf:len() - offset) .. "/" .. tostring(BMW_MSG_HDR_LEN + data_len) .. ")"
+		if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
+			pktinfo.cols.info:set("BMW BCL " .. info)
+		else
+			-- found a partial packet at the end of a combined packet
+			pktinfo.cols.info:set(tostring(pktinfo.cols.info) .. ", " .. info)
+		end
 	end
 	
 	
