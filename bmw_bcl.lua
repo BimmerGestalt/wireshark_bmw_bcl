@@ -249,13 +249,14 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			local info = "BMW BCL (continuing fragment " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. ")"
 			pktinfo.cols.info:set(info)
 		end
-		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
-		tree:add(hdr_fields.val1, state.val1)
-		tree:add(hdr_fields.channel, state.channel)
-		tree:add(hdr_fields.type, state.type)
-		tree:add(hdr_fields.len, state.total_size)
-		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
-		
+		if root ~= nil then
+			local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
+			tree:add(hdr_fields.val1, state.val1)
+			tree:add(hdr_fields.channel, state.channel)
+			tree:add(hdr_fields.type, state.type)
+			tree:add(hdr_fields.len, state.total_size)
+			tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
+		end
 		return this_packet_size
 	elseif received_size >= total_size then
 		-- make an assembled packet and analyze it
@@ -281,13 +282,14 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			local info = "BMW BCL (final fragment " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. ")"
 			pktinfo.cols.info:set(info)
 		end
-		local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
-		tree:add(hdr_fields.val1, state.val1)
-		tree:add(hdr_fields.channel, state.channel)
-		tree:add(hdr_fields.type, state.type)
-		tree:add(hdr_fields.len, state.total_size)
-		tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
-		
+		if root ~= nil then
+			local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
+			tree:add(hdr_fields.val1, state.val1)
+			tree:add(hdr_fields.channel, state.channel)
+			tree:add(hdr_fields.type, state.type)
+			tree:add(hdr_fields.len, state.total_size)
+			tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
+		end
 		local assembled_tvbuf = state.assembled_bytes:tvb("SPP Assembled")
 		local result = dissect_full_packet(assembled_tvbuf, pktinfo, root, 0)
 		return needed_size
@@ -308,14 +310,16 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	
 	data_len = tvbuf:range(offset+6, 2):uint()
 	
-	-- create the protocol tree field
-	local tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + data_len))
-	
-	-- get the vals
-	tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
-	tree:add(hdr_fields.channel, tvbuf:range(offset+2, 2))
-	tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
-	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
+	if root ~= nil then
+		-- create the protocol tree field
+		local tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + data_len))
+		
+		-- get the vals
+		tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
+		tree:add(hdr_fields.channel, tvbuf:range(offset+2, 2))
+		tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
+		tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
+	end
 	
 	-- try to parse the inner data
 	local channel = tvbuf:range(offset, 4):uint()
