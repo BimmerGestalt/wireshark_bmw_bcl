@@ -13,7 +13,7 @@ local function resetDebugLevel()
 	current_debug_level = 2
 	if current_debug_level > debug_level.DISABLED then
 		dprint = function(...)
-			info(table.concat({"Lua: ", ...}," "))
+			info(table.concat({"BMW BCL: ", ...}," "))
 		end
 
 		if current_debug_level > debug_level.LEVEL_1 then
@@ -167,13 +167,17 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 	-- load up any reassembly state for this packet
 	local packet_number = tostring(pktinfo.number) .. ":" .. tostring(offset)
 	local state = assembled_packets[packet_number]
-	local packet_fragment_type = 0
+	local packet_fragment_type = -1
 	if state ~= nil then
 		packet_fragment_type = state.partial_type
 		dprint2("Already know that this packet is fragment type " .. tostring(packet_fragment_type))
 	end
 	
 	-- handle a new packet
+	if packet_fragment_type ~= -1 and partial_packets[address] ~= nil then
+		dprint2("Encountered the start of a known new packet while collecting reassembly!")
+		partial_packets[address] = nil
+	end
 	if packet_fragment_type < 2 and partial_packets[address] == nil then
 		local data_length = tvbuf:range(offset+6,2):uint()
 		if pktlen >= offset + BMW_MSG_HDR_LEN + data_length then
@@ -184,6 +188,12 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 					pktinfo.cols.info:set(tostring(pktinfo.cols.info) .. ", multiple packets")
 				end
 			end
+			state = {
+				partial_type = 0,
+				start_size = 0,
+				total_size = BMW_MSG_HDR_LEN + data_length
+			}
+			assembled_packets[packet_number] = state
 			return result
 		else
 			-- save the packet for reassembly
