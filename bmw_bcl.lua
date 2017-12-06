@@ -30,14 +30,28 @@ resetDebugLevel()
 
 local bmw_proto = Proto("bmw", "BMW BCL")
 
-local TYPE_NAMES = {}
-TYPE_NAMES[0x0FA4] = "Etch"
+local COMMAND_NAMES = {}
+COMMAND_NAMES[1] = "OPEN"
+COMMAND_NAMES[2] = "DATA"
+COMMAND_NAMES[3] = "CLOSE"
+COMMAND_NAMES[4] = "HANDSHAKE"
+COMMAND_NAMES[5] = "SELECTPROTO"
+COMMAND_NAMES[6] = "DATAACK"
+COMMAND_NAMES[7] = "ACK"
+COMMAND_NAMES[8] = "KNOCK"
+COMMAND_NAMES[9] = "LAUNCH"
+COMMAND_NAMES[10] = "HANGUP"
+COMMAND_NAMES[11] = "BROADCAST"
+COMMAND_NAMES[12] = "REGISTER"
+
+local DST_NAMES = {}
+DST_NAMES[0x0FA4] = "Etch"
 
 local hdr_fields =
 {
-	val1 = ProtoField.uint16 ("bmw.val1", "Val1", base.HEX),
-	channel = ProtoField.uint16 ("bmw.channel", "Channel", base.DEC),
-	type = ProtoField.uint16 ("bmw.type", "Type", base.HEX, TYPE_NAMES),
+	command = ProtoField.uint16 ("bmw.command", "Command", base.DEC, COMMAND_NAMES),
+	src = ProtoField.uint16 ("bmw.src", "Source", base.DEC),
+	dst = ProtoField.uint16 ("bmw.dst", "Dest", base.HEX, DST_NAMES),
 	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC)
 }
 bmw_proto.fields = hdr_fields
@@ -201,9 +215,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			
 			if state == nil then
 				partial_packets[address] = {}
-				partial_packets[address].val1 = tvbuf:range(offset+0, 2):uint()
-				partial_packets[address].channel = tvbuf:range(offset+2, 2):uint()
-				partial_packets[address].type = tvbuf:range(offset+4, 2):uint()
+				partial_packets[address].command = tvbuf:range(offset+0, 2):uint()
+				partial_packets[address].src = tvbuf:range(offset+2, 2):uint()
+				partial_packets[address].dst = tvbuf:range(offset+4, 2):uint()
 				partial_packets[address].number = pktinfo.number
 				partial_packets[address].bytes = tvbuf:bytes(offset)
 				partial_packets[address].total_size = BMW_MSG_HDR_LEN + data_length
@@ -240,9 +254,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 		-- accrue more data
 		if state == nil then
 			state = {
-				val1 = reassembly.val1,
-				channel = reassembly.channel,
-				type = reassembly.type,
+				command = reassembly.command,
+				src = reassembly.src,
+				dst = reassembly.dst,
 				partial_type = 2,
 				start_size = reassembly.bytes:len(),
 				total_size = reassembly.total_size
@@ -253,7 +267,7 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			reassembly.bytes:append(tvbuf:bytes(offset, this_packet_size))
 		end
 		
-		dprint2("Collecting more data on channel " .. tostring(address) .. " - " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size))
+		dprint2("Collecting more data on src " .. tostring(address) .. " - " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size))
 		pktinfo.cols.protocol:set("BMW BCL")
 		if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
 			local info = "BMW BCL (continuing fragment " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. ")"
@@ -261,9 +275,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 		end
 		if root ~= nil then
 			local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
-			tree:add(hdr_fields.val1, state.val1)
-			tree:add(hdr_fields.channel, state.channel)
-			tree:add(hdr_fields.type, state.type)
+			tree:add(hdr_fields.command, state.command)
+			tree:add(hdr_fields.src, state.src)
+			tree:add(hdr_fields.dst, state.dst)
 			tree:add(hdr_fields.len, state.total_size)
 			tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
 		end
@@ -272,9 +286,9 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 		-- make an assembled packet and analyze it
 		if state == nil then
 			state = {
-				val1 = reassembly.val1,
-				channel = reassembly.channel,
-				type = reassembly.type,
+				command = reassembly.command,
+				src = reassembly.src,
+				dst = reassembly.dst,
 				partial_type = 3,
 				start_size = reassembly.bytes:len(),
 				total_size = reassembly.total_size
@@ -287,16 +301,16 @@ function dissect_subpackets(tvbuf, pktinfo, root, offset)
 			partial_packets[address] = nil
 		end
 		
-		dprint2("Found a complete packet on channel " .. tostring(address) .. " - " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size))
+		dprint2("Found a complete packet on src " .. tostring(address) .. " - " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size))
 		if string.find(tostring(pktinfo.cols.info), "^BMW") == nil then
 			local info = "BMW BCL (final fragment " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. ")"
 			pktinfo.cols.info:set(info)
 		end
 		if root ~= nil then
 			local tree = root:add(bmw_proto, tvbuf:range(offset, this_packet_size))
-			tree:add(hdr_fields.val1, state.val1)
-			tree:add(hdr_fields.channel, state.channel)
-			tree:add(hdr_fields.type, state.type)
+			tree:add(hdr_fields.command, state.command)
+			tree:add(hdr_fields.src, state.src)
+			tree:add(hdr_fields.dst, state.dst)
 			tree:add(hdr_fields.len, state.total_size)
 			tree:add(tvbuf:range(offset, this_packet_size), "[Fragment of Data " .. tostring(state.start_size) .. "-" .. tostring(state.start_size + this_packet_size) .. "/" .. tostring(state.total_size) .. "]")
 		end
@@ -325,19 +339,19 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 		local tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + data_len))
 		
 		-- get the vals
-		tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
-		tree:add(hdr_fields.channel, tvbuf:range(offset+2, 2))
-		tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
+		tree:add(hdr_fields.command, tvbuf:range(offset+0, 2))
+		tree:add(hdr_fields.src, tvbuf:range(offset+2, 2))
+		tree:add(hdr_fields.dst, tvbuf:range(offset+4, 2))
 		tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
 	end
 	
 	-- try to parse the inner data
-	local channel = tvbuf:range(offset, 4):uint()
+	local src = tvbuf:range(offset, 4):uint()
 	ETCH_MAGIC = ByteArray.new("de ad be ef")
 	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
 	local is_etch = data_len > 4 and remaining_tvb:bytes(0,4) == ETCH_MAGIC
-	if etch_channels[channel] or is_etch then
-		etch_channels[channel] = true
+	if etch_channels[src] or is_etch then
+		etch_channels[src] = true
 		local dissect_etch = Dissector.get("bmw_bcl_etch")
 		dissect_etch:call(remaining_tvb, pktinfo, root)
 	else
@@ -372,9 +386,9 @@ function dissect_start_fragment_packet(tvbuf, pktinfo, root, offset)
 	local tree = root:add(bmw_proto, tvbuf:range(offset))
 	
 	-- get the vals
-	tree:add(hdr_fields.val1, tvbuf:range(offset+0, 2))
-	tree:add(hdr_fields.channel, tvbuf:range(offset+2, 2))
-	tree:add(hdr_fields.type, tvbuf:range(offset+4, 2))
+	tree:add(hdr_fields.command, tvbuf:range(offset+0, 2))
+	tree:add(hdr_fields.src, tvbuf:range(offset+2, 2))
+	tree:add(hdr_fields.dst, tvbuf:range(offset+4, 2))
 	tree:add(hdr_fields.len, tvbuf:range(offset+6, 2))
 	
 	tree:add(tvbuf:range(offset + BMW_MSG_HDR_LEN), "[Fragment of Data 0-" .. tostring(tvbuf:len() - offset) .. "/" .. tostring(BMW_MSG_HDR_LEN + data_len) .. "]")

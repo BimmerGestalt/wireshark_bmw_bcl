@@ -28,7 +28,7 @@ end
 -- call it now
 resetDebugLevel()
 
-bcl_channel = Field.new("bmw.channel")	-- get the BCL channel that the Etch stream is wrapped in, to combine the appropriate streams
+bcl_channel = Field.new("bmw.src")	-- get the BCL channel that the Etch stream is wrapped in, to combine the appropriate streams
 
 local bcl_proto = Proto("bmw_bcl_etch", "BMW BCL-wrapped Etch")
 
