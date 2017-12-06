@@ -52,7 +52,13 @@ local hdr_fields =
 	command = ProtoField.uint16 ("bmw.command", "Command", base.DEC, COMMAND_NAMES),
 	src = ProtoField.uint16 ("bmw.src", "Source", base.DEC),
 	dst = ProtoField.uint16 ("bmw.dst", "Dest", base.HEX, DST_NAMES),
-	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC)
+	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC),
+	
+	-- knock fields
+	serialNumber = ProtoField.string ("bmw.serial", "Serial"),
+	btAddr = ProtoField.bytes ("bmw.btaddr", "BT Addr", base.COLON),
+	macAddr = ProtoField.bytes ("bmw.macaddr", "MAC Addr", base.COLON),
+	wifiAddr = ProtoField.bytes ("bmw.wifiaddr", "WIFI Addr", base.COLON)
 }
 bmw_proto.fields = hdr_fields
 
@@ -332,11 +338,16 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 		pktinfo.cols.info:set("BMW BCL")
 	end
 	
-	data_len = tvbuf:range(offset+6, 2):uint()
+	local command = tvbuf:range(offset+0, 2):uint()
+	local src = tvbuf:range(offset, 2):uint()
+	local dst = tvbuf:range(offset, 4):uint()
+	local data_len = tvbuf:range(offset+6, 2):uint()
+	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
 	
+	local tree
 	if root ~= nil then
 		-- create the protocol tree field
-		local tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + data_len))
+		tree = root:add(bmw_proto, tvbuf:range(offset, BMW_MSG_HDR_LEN + data_len))
 		
 		-- get the vals
 		tree:add(hdr_fields.command, tvbuf:range(offset+0, 2))
@@ -346,11 +357,31 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	end
 	
 	-- try to parse the inner data
-	local src = tvbuf:range(offset, 4):uint()
 	ETCH_MAGIC = ByteArray.new("de ad be ef")
-	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
 	local is_etch = data_len > 4 and remaining_tvb:bytes(0,4) == ETCH_MAGIC
-	if etch_channels[src] or is_etch then
+	
+	if tree ~= nil and command == 8 then
+	-- knock command
+		local dataoffset
+		local field_len
+		dataoffset = offset + BMW_MSG_HDR_LEN
+		
+		field_len = tvbuf:range(dataoffset, 2):uint()
+		tree:add(hdr_fields.serialNumber, tvbuf:range(dataoffset+2, field_len))
+		dataoffset = dataoffset + 2 + field_len
+		
+		field_len = tvbuf:range(dataoffset, 2):uint()
+		tree:add(hdr_fields.btAddr, tvbuf:range(dataoffset+2, field_len))
+		dataoffset = dataoffset + 2 + field_len
+		
+		field_len = tvbuf:range(dataoffset, 2):uint()
+		tree:add(hdr_fields.macAddr, tvbuf:range(dataoffset+2, field_len))
+		dataoffset = dataoffset + 2 + field_len
+		
+		field_len = tvbuf:range(dataoffset, 2):uint()
+		tree:add(hdr_fields.wifiAddr, tvbuf:range(dataoffset+2, field_len))
+	elseif etch_channels[src] or is_etch then
+	-- etch data
 		etch_channels[src] = true
 		local dissect_etch = Dissector.get("bmw_bcl_etch")
 		dissect_etch:call(remaining_tvb, pktinfo, root)
