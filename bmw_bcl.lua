@@ -58,7 +58,10 @@ local hdr_fields =
 	serialNumber = ProtoField.string ("bmw.serial", "Serial"),
 	btAddr = ProtoField.bytes ("bmw.btaddr", "BT Addr", base.COLON),
 	macAddr = ProtoField.bytes ("bmw.macaddr", "MAC Addr", base.COLON),
-	wifiAddr = ProtoField.bytes ("bmw.wifiaddr", "WIFI Addr", base.COLON)
+	wifiAddr = ProtoField.bytes ("bmw.wifiaddr", "WIFI Addr", base.COLON),
+	
+	-- dataack field
+	dataAck = ProtoField.uint32 ("bmw.ack", "Ack", base.DEC)
 }
 bmw_proto.fields = hdr_fields
 
@@ -360,11 +363,10 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	ETCH_MAGIC = ByteArray.new("de ad be ef")
 	local is_etch = data_len > 4 and remaining_tvb:bytes(0,4) == ETCH_MAGIC
 	
+	local dataoffset = offset + BMW_MSG_HDR_LEN
 	if tree ~= nil and command == 8 then
 	-- knock command
-		local dataoffset
 		local field_len
-		dataoffset = offset + BMW_MSG_HDR_LEN
 		
 		field_len = tvbuf:range(dataoffset, 2):uint()
 		tree:add(hdr_fields.serialNumber, tvbuf:range(dataoffset+2, field_len))
@@ -380,6 +382,9 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 		
 		field_len = tvbuf:range(dataoffset, 2):uint()
 		tree:add(hdr_fields.wifiAddr, tvbuf:range(dataoffset+2, field_len))
+	elseif tree ~= nil and command == 6 then
+	-- dataack command
+		tree:add(hdr_fields.dataAck, tvbuf:range(dataoffset, 4))
 	elseif etch_channels[src] or is_etch then
 	-- etch data
 		etch_channels[src] = true
