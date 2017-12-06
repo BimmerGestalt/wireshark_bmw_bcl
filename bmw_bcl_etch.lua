@@ -60,10 +60,16 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 	-- load up previous assembly state
 	local partial_packet = partial_packets[bcl_channel()()]
 	local assembly_state = assembly_states[pktinfo.number]	-- is this a split packet?
-	local partial_type = 0
+	local partial_type = -1
 	if assembly_state ~= nil then
 		partial_type = assembly_state.partial_type
 		dprint2("Already know this Etch packet is partial type " .. tostring(partial_type))
+	end
+	
+	-- handle a new packet
+	if partial_type ~= -1 and partial_packets[bcl_channel()()] ~= nil then
+		dprint2("Encountered the start of a known new packet while collecting reassembly!")
+		partial_packets[bcl_channel()()] = nil
 	end
 	
 	if partial_packet == nil and partial_type < 2 then
@@ -75,6 +81,14 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 		
 		local etch_message_len = tvbuf:range(4,4):uint()
 		if tvbuf:len() >= ETCH_MSG_HDR_LEN + etch_message_len then
+			-- complete packet
+			state = {
+				partial_type = 0,
+				start_size = 0,
+				total_size = ETCH_MSG_HDR_LEN + etch_message_len
+			}
+			assembly_states[pktinfo.number] = state
+			-- parse it as Etch
 			dissect_etch:call(tvbuf, pktinfo, root)
 			return tvbuf:len()
 		end
