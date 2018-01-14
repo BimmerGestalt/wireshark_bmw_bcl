@@ -342,8 +342,8 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	end
 	
 	local command = tvbuf:range(offset+0, 2):uint()
-	local src = tvbuf:range(offset, 2):uint()
-	local dst = tvbuf:range(offset, 4):uint()
+	local src = tvbuf:range(offset+2, 2):uint()
+	local dst = tvbuf:range(offset+4, 2):uint()
 	local data_len = tvbuf:range(offset+6, 2):uint()
 	remaining_tvb = tvbuf(offset + BMW_MSG_HDR_LEN, data_len):tvb()
 	
@@ -389,7 +389,7 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 	-- etch data
 		etch_channels[src] = true
 		local dissect_etch = Dissector.get("bmw_bcl_etch")
-		dissect_etch:call(remaining_tvb, pktinfo, root)
+		dissect_etch:call(tvbuf(offset, data_len + BMW_MSG_HDR_LEN):tvb(), pktinfo, root)
 	else
 		local dissect_data = Dissector.get("data")
 		dissect_data:call(remaining_tvb, pktinfo, root)

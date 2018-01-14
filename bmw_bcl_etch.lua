@@ -33,13 +33,14 @@ bcl_channel = Field.new("bmw.src")	-- get the BCL channel that the Etch stream i
 local bcl_proto = Proto("bmw_bcl_etch", "BMW BCL-wrapped Etch")
 
 local partial_packets = {}		-- currently assembling this packet, during the first pass, keyed by a connection id
-local assembly_states = {}	-- assembly state for each packet, keyed by pktinfo.number
+local assembly_states = {}	-- assembly state for each packet, keyed by pktinfo.number+offset
 
 function bcl_proto.init()
 	partial_packets = {}
 	assembly_states = {}
 end
 
+local BMW_MSG_HDR_LEN = 8
 local ETCH_MSG_HDR_LEN = 8  -- the bytes at the front, which aren't included in the Etch Length count
 
 local function heuristic(tvbuf, pktinfo, root)
@@ -57,9 +58,16 @@ end
 
 function bcl_proto.dissector(tvbuf, pktinfo, root)
 	local dissect_etch = Dissector.get("etch")	-- the real Etch dissector
+	-- parse the incoming packet again, to get the channel
+	local bcl_src = tvbuf:range(0+2, 2):uint()
+	local bcl_data_len = tvbuf:range(0+6, 2):uint()
+	tvbuf = tvbuf(BMW_MSG_HDR_LEN, data_len):tvb()
 	-- load up previous assembly state
-	local partial_packet = partial_packets[bcl_channel()()]
-	local assembly_state = assembly_states[pktinfo.number]	-- is this a split packet?
+	local partial_packet = partial_packets[bcl_src]
+	local packet_number = tostring(pktinfo.number) .. ":" .. tostring(tvbuf:offset())
+	
+	dprint2("Parsing packet " .. packet_number .. " from bcl " .. tostring(bcl_src))
+	local assembly_state = assembly_states[packet_number]	-- is this a split packet?
 	local partial_type = -1
 	if assembly_state ~= nil then
 		partial_type = assembly_state.partial_type
@@ -67,9 +75,9 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 	end
 	
 	-- handle a new packet
-	if partial_type ~= -1 and partial_packets[bcl_channel()()] ~= nil then
+	if partial_type ~= -1 and partial_packet ~= nil then
 		dprint2("Encountered the start of a known new packet while collecting reassembly!")
-		partial_packets[bcl_channel()()] = nil
+		partial_packets[bcl_src] = nil
 	end
 	
 	if partial_packet == nil and partial_type < 2 then
@@ -87,7 +95,7 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 				start_size = 0,
 				total_size = ETCH_MSG_HDR_LEN + etch_message_len
 			}
-			assembly_states[pktinfo.number] = state
+			assembly_states[packet_number] = state
 			-- parse it as Etch
 			dissect_etch:call(tvbuf, pktinfo, root)
 			return tvbuf:len()
@@ -99,12 +107,12 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 			partial_packet = {}
 			partial_packet.bytes = tvbuf:bytes()
 			partial_packet.total_size = ETCH_MSG_HDR_LEN + etch_message_len
-			partial_packets[bcl_channel()()] = partial_packet
+			partial_packets[bcl_src] = partial_packet
 			assembly_state = {}
 			assembly_state.partial_type = 1
 			assembly_state.start_size = 0
 			assembly_state.total_size = partial_packet.total_size
-			assembly_states[pktinfo.number] = assembly_state
+			assembly_states[packet_number] = assembly_state
 		end
 		dprint2("Found the start of an incomplete packet of length " .. tostring(assembly_state.total_size))
 		-- update the display for this packet
@@ -127,9 +135,9 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 			-- finished collecting bytes
 			assembly_state.partial_type = 3
 			assembly_state.bytes = partial_packet.bytes
-			partial_packets[bcl_channel()()] = nil
+			partial_packets[bcl_src] = nil
 		end
-		assembly_states[pktinfo.number] = assembly_state
+		assembly_states[packet_number] = assembly_state
 	end
 	
 	-- update display for the packets
@@ -139,6 +147,7 @@ function bcl_proto.dissector(tvbuf, pktinfo, root)
 		pktinfo.cols.info:set(info)
 		return tvbuf:len()
 	elseif assembly_state.partial_type == 3 then
+		local tree = root:add(bcl_proto, tvbuf:range())
 		local assembled_tvb = assembly_state.bytes:tvb("BCL Assembled")
 		dissect_etch:call(assembled_tvb, pktinfo, root)
 		return tvbuf:len()
