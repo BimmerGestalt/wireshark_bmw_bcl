@@ -14,7 +14,7 @@ local function resetDebugLevel()
 	current_debug_level = 2
 	if current_debug_level > debug_level.DISABLED then
 		dprint = function(...)
-			info(table.concat({"Lua_etch: ", ...}," "))
+			print("INFO: " .. table.concat({"Lua_etch: ", ...}," "))
 		end
 
 		if current_debug_level > debug_level.LEVEL_1 then

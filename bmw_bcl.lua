@@ -13,7 +13,7 @@ local function resetDebugLevel()
 	current_debug_level = 2
 	if current_debug_level > debug_level.DISABLED then
 		dprint = function(...)
-			info(table.concat({"BMW BCL: ", ...}," "))
+			print("INFO: " .. table.concat({"BMW BCL: ", ...}," "))
 		end
 
 		if current_debug_level > debug_level.LEVEL_1 then
