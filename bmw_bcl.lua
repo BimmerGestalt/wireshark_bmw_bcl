@@ -46,12 +46,13 @@ COMMAND_NAMES[12] = "REGISTER"
 
 local DST_NAMES = {}
 DST_NAMES[0x0FA4] = "Etch"
+DST_NAMES[0x1389] = "Watchdog"
 
 local hdr_fields =
 {
 	command = ProtoField.uint16 ("bmw.command", "Command", base.DEC, COMMAND_NAMES),
 	src = ProtoField.uint16 ("bmw.src", "Source", base.DEC),
-	dst = ProtoField.uint16 ("bmw.dst", "Dest", base.HEX, DST_NAMES),
+	dst = ProtoField.uint16 ("bmw.dst", "Dest", base.DEC, DST_NAMES),
 	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC),
 	
 	-- startup
