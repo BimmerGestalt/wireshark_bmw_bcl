@@ -44,6 +44,12 @@ COMMAND_NAMES[10] = "HANGUP"
 COMMAND_NAMES[11] = "BROADCAST"
 COMMAND_NAMES[12] = "REGISTER"
 
+local APPTYPE_NAMES = {}
+APPTYPE_NAMES[0] = "A4A"
+APPTYPE_NAMES[1] = "TouchCommand"
+APPTYPE_NAMES[2] = "Carplay"
+APPTYPE_NAMES[3] = "AndroidAuto"
+
 local DST_NAMES = {}
 DST_NAMES[0x0FA4] = "Etch"
 DST_NAMES[0x1389] = "Watchdog"
@@ -63,6 +69,8 @@ local hdr_fields =
 	btAddr = ProtoField.bytes ("bmw.btaddr", "BT Addr", base.COLON),
 	macAddr = ProtoField.bytes ("bmw.macaddr", "MAC Addr", base.COLON),
 	wifiAddr = ProtoField.bytes ("bmw.wifiaddr", "WIFI Addr", base.COLON),
+	appType = ProtoField.uint16 ("bmw.appType", "App Type", base.DEC, APPTYPE_NAMES),
+	param1 = ProtoField.uint16 ("bmw.param1", "Param", base.DEC),
 	
 	-- dataack field
 	dataAck = ProtoField.uint32 ("bmw.ack", "Ack", base.DEC)
@@ -388,6 +396,10 @@ function dissect_full_packet(tvbuf, pktinfo, root, offset)
 		
 		field_len = tvbuf:range(dataoffset, 2):uint()
 		tree:add(hdr_fields.wifiAddr, tvbuf:range(dataoffset+2, field_len))
+		dataoffset = dataoffset + 2 + field_len
+		
+		tree:add(hdr_fields.appType, tvbuf:range(dataoffset+0, 2))
+		tree:add(hdr_fields.param1, tvbuf:range(dataoffset+2, 2))
 	elseif tree ~= nil and command == 6 then
 	-- dataack command
 		tree:add(hdr_fields.dataAck, tvbuf:range(dataoffset, 4))
