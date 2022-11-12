@@ -54,6 +54,9 @@ local hdr_fields =
 	dst = ProtoField.uint16 ("bmw.dst", "Dest", base.HEX, DST_NAMES),
 	len = ProtoField.uint16 ("bmw.len", "Length", base.DEC),
 	
+	-- startup
+	magic = ProtoField.bytes("bmw.magic", "Magic", base.COLON),
+	
 	-- knock fields
 	serialNumber = ProtoField.string ("bmw.serial", "Serial"),
 	btAddr = ProtoField.bytes ("bmw.btaddr", "BT Addr", base.COLON),
@@ -159,6 +162,8 @@ function bmw_proto.dissector(tvbuf, pktinfo, root)
 	if pktlen == 4 and tvbuf:bytes():tohex() == "12345678" then
 		pktinfo.cols.protocol:set("BMW BCL")
 		pktinfo.cols.info:set("BMW BCL Startup")
+		local tree = root:add(bmw_proto, tvbuf:range(0, 4))
+		tree:add(hdr_fields.magic, tvbuf:range(0, 4))
 		return 4
 	end
 	
